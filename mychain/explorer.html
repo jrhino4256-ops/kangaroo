@@ -141,10 +141,11 @@ button.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px
 
   <section class="panel me-panel" id="my-wallet">
     <div class="intro"><h2>Your wallet</h2>
-      <p class="muted foot">Paste your address from <span class="mono">python3 wallet.py address</span>. An address is safe to share. Never paste your private key or the contents of your wallet file anywhere.</p></div>
+      <p class="muted foot">Paste your address from <span class="mono">python3 wallet.py address</span>, or connect Phantom to use its Bitcoin key. An address is safe to share. Never paste your private key or the contents of your wallet file anywhere.</p></div>
     <form class="addr-row" id="addr-form" autocomplete="off">
       <input id="my-address" spellcheck="false" placeholder="1…" aria-label="Your wallet address">
       <button class="btn" type="submit">Show my wallet</button>
+      <button class="btn ghost" type="button" id="phantom">Connect Phantom</button>
     </form>
     <p class="foot" id="addr-msg" hidden></p>
     <div id="my-info" hidden></div>
@@ -233,12 +234,57 @@ function verifySig(pubHex, hashHex, sigHex) {
   return !!pt && mod(pt[0], N) === r;
 }
 
+// RIPEMD-160 (not in SubtleCrypto), for turning a public key into an address
+function ripemd160(data) {
+  const ML = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,7,4,13,1,10,6,15,3,12,0,9,5,2,14,11,8,3,10,14,4,9,15,8,1,2,7,0,6,13,11,5,12,1,9,11,10,0,8,12,4,13,3,7,15,14,5,6,2,4,0,5,9,7,12,2,10,14,1,3,8,11,6,15,13];
+  const MR = [5,14,7,0,9,2,11,4,13,6,15,8,1,10,3,12,6,11,3,7,0,13,5,10,14,15,8,12,4,9,1,2,15,5,1,3,7,14,6,9,11,8,12,2,10,0,4,13,8,6,4,1,3,11,15,0,5,12,2,13,9,7,10,14,12,15,10,4,1,5,8,7,6,2,13,14,0,3,9,11];
+  const RL = [11,14,15,12,5,8,7,9,11,13,14,15,6,7,9,8,7,6,8,13,11,9,7,15,7,12,15,9,11,7,13,12,11,13,6,7,14,9,13,15,14,8,13,6,5,12,7,5,11,12,14,15,14,15,9,8,9,14,5,6,8,6,5,12,9,15,5,11,6,8,13,12,5,12,13,14,11,8,5,6];
+  const RR = [8,9,9,11,13,15,15,5,7,7,8,11,14,14,12,6,9,13,15,7,12,8,9,11,7,7,12,7,6,15,13,11,9,7,15,11,8,6,6,14,12,13,5,14,13,13,7,5,15,5,8,11,14,14,6,14,6,9,12,9,12,5,15,8,8,5,12,9,12,5,14,6,8,13,6,5,15,13,11,11];
+  const KL = [0x00000000, 0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xA953FD4E];
+  const KR = [0x50A28BE6, 0x5C4DD124, 0x6D703EF3, 0x7A6D76E9, 0x00000000];
+  const f = (j, x, y, z) => j === 0 ? x ^ y ^ z : j === 1 ? (x & y) | (~x & z) : j === 2 ? (x | ~y) ^ z
+    : j === 3 ? (x & z) | (y & ~z) : x ^ (y | ~z);
+  const rol = (x, n) => (x << n) | (x >>> (32 - n));
+  const len = data.length, padLen = ((55 - len) % 64 + 64) % 64;
+  const msg = new Uint8Array(len + 1 + padLen + 8);
+  msg.set(data); msg[len] = 0x80;
+  new DataView(msg.buffer).setUint32(msg.length - 8, (len * 8) >>> 0, true);
+  new DataView(msg.buffer).setUint32(msg.length - 4, Math.floor(len / 0x20000000), true);
+  let h = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
+  const dv = new DataView(msg.buffer);
+  for (let off = 0; off < msg.length; off += 64) {
+    const x = Array.from({ length: 16 }, (_, i) => dv.getUint32(off + 4 * i, true));
+    let [al, bl, cl, dl, el] = h, [ar, br, cr, dr, er] = h;
+    for (let j = 0; j < 80; j++) {
+      const r = j >> 4;
+      let t = (rol((al + f(r, bl, cl, dl) + x[ML[j]] + KL[r]) | 0, RL[j]) + el) | 0;
+      [al, bl, cl, dl, el] = [el, t, bl, rol(cl, 10), dl];
+      t = (rol((ar + f(4 - r, br, cr, dr) + x[MR[j]] + KR[r]) | 0, RR[j]) + er) | 0;
+      [ar, br, cr, dr, er] = [er, t, br, rol(cr, 10), dr];
+    }
+    h = [(h[1] + cl + dr) | 0, (h[2] + dl + er) | 0, (h[3] + el + ar) | 0, (h[4] + al + br) | 0, (h[0] + bl + cr) | 0];
+  }
+  const out = new Uint8Array(20), ov = new DataView(out.buffer);
+  h.forEach((v, i) => ov.setUint32(4 * i, v >>> 0, true));
+  return out;
+}
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+async function addressFromPubkey(pubHex) {  // crypto.address_from_pubkey: Base58Check(0x00 + hash160)
+  const h160 = ripemd160(new Uint8Array(await crypto.subtle.digest("SHA-256", unhex(pubHex))));
+  const payload = new Uint8Array(21); payload.set(h160, 1);
+  const data = new Uint8Array(25); data.set(payload); data.set((await sha256d(payload)).slice(0, 4), 21);
+  let n = BigInt("0x" + hex(data)), out = "";
+  while (n) { out = B58[Number(n % 58n)] + out; n /= 58n; }
+  let zeros = 0; while (data[zeros] === 0) zeros++;
+  return "1".repeat(zeros) + out;
+}
+
 // node.py serves this page and the page reads the node's live chain. The published
 // sample copy replaces EMBEDDED with a fixed chain and works offline.
 const EMBEDDED = null;
 const LIVE = !EMBEDDED;
 let DATA = EMBEDDED, COIN = 1e8, ORIGINAL = "[]", blocks = [];
-let selected = 0, results = [], mining = false, utxo = new Map(), me = "";
+let selected = 0, results = [], mining = false, utxo = new Map(), me = "", phantomAddr = "";
 async function loadLive() {
   const d = await (await fetch("chain", { cache: "no-store" })).json();
   DATA = { blocks: d.blocks.map((b, i) => ({ ...b, height: i })), names: {}, params: d.params };
@@ -247,9 +293,8 @@ function adopt() { COIN = DATA.params.coin; ORIGINAL = JSON.stringify(DATA.block
 const STORE = "mychain-explorer";
 function loadSaved() { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; } }
 function save() {
-  try { localStorage.setItem(STORE, JSON.stringify({ address: me, mined: LIVE ? [] : JSON.parse(ORIGINAL).slice(DATA.blocks.length) })); } catch {}
+  try { localStorage.setItem(STORE, JSON.stringify({ address: me, phantom: phantomAddr, mined: LIVE ? [] : JSON.parse(ORIGINAL).slice(DATA.blocks.length) })); } catch {}
 }
-const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 async function isAddress(s) {  // Base58Check, version 0, like crypto.is_valid_address
   if (!/^[1-9A-HJ-NP-Za-km-z]{25,35}$/.test(s)) return false;
   let n = 0n; for (const c of s) n = n * 58n + BigInt(B58.indexOf(c));
@@ -391,6 +436,7 @@ function renderMe() {
   box.innerHTML = `<div class="me-summary">
       <div class="stat"><span class="label">Your balance on this chain</span><b class="num">${fmt(balanceOf(me))}</b></div>
       <span class="mono muted">${me}</span></div>
+    ${phantomAddr ? `<p class="foot">Connected with Phantom. This MyChain address uses the same key as your Phantom Bitcoin address <span class="mono">${esc(phantomAddr)}</span>, so only your Phantom wallet controls it. MyChain coins do not show up inside the Phantom app. Check them here.</p>` : ""}
     ${history.length ? `<div class="history">${history.reverse().map(h => `<div class="row"><span>${h.cb ? "Mining reward" : h.net >= 0 ? "Received" : "Sent"} · block #${h.i}</span>
       <span class="amt ${h.net >= 0 ? "plus" : "minus"}">${h.net >= 0 ? "+" : "−"}${fmt(Math.abs(h.net))}</span></div>`).join("")}</div>`
       : `<p class="muted foot">${LIVE ? "No coins yet on this node's chain. Mine a block below, or have someone send you coins with wallet.py send." : "No coins yet. This page holds a sample chain, so it cannot see blocks your own node mined. Mine the next block here and its reward goes to you."}</p>`}
@@ -484,7 +530,30 @@ async function mineToMe() {
   document.querySelector(`.tile[data-i="${height}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
+async function connectPhantom() {
+  const msg = document.getElementById("addr-msg");
+  const say = text => { msg.hidden = false; msg.className = "foot msg-bad"; msg.innerHTML = text; };
+  const provider = window.phantom?.bitcoin;
+  if (!provider?.isPhantom) {
+    return say(window.top !== window
+      ? `Phantom cannot reach this page because it is shown inside another site. Open the explorer from your node instead: run <span class="mono">python3 node.py</span> and go to <span class="mono">http://127.0.0.1:8001/</span>.`
+      : `Phantom is not installed in this browser, or its Bitcoin network is off. Install it from <a href="https://phantom.com/download" target="_blank" rel="noopener">phantom.com</a>, turn on Bitcoin in Phantom's settings, then reload this page.`);
+  }
+  let accounts;
+  try { accounts = await provider.requestAccounts(); }
+  catch { return say("Phantom did not connect. Approve the request in the Phantom window to continue."); }
+  // MyChain keys are secp256k1 like Bitcoin's, so Phantom's 33-byte SegWit public key works as-is.
+  const acct = (accounts || []).find(a => a.addressType === "p2wpkh" && /^0[23][0-9a-f]{64}$/i.test(a.publicKey || ""));
+  if (!acct) return say("Phantom did not share a Bitcoin SegWit key, which MyChain needs. Check that Bitcoin is turned on in Phantom's settings and try again.");
+  me = await addressFromPubkey(acct.publicKey);
+  phantomAddr = acct.address;
+  document.getElementById("my-address").value = me;
+  msg.hidden = true;
+  save(); render();
+}
+
 function forget() {
+  phantomAddr = "";
   me = ""; document.getElementById("my-address").value = "";
   save(); render();
 }
@@ -605,8 +674,10 @@ document.getElementById("addr-form").addEventListener("submit", async e => {
     return;
   }
   msg.hidden = true;
+  if (v !== me) phantomAddr = "";
   me = v; save(); render();
 });
+document.getElementById("phantom").addEventListener("click", connectPhantom);
 
 setInterval(async () => {
   if (!LIVE || mining || document.hidden || JSON.stringify(blocks) !== ORIGINAL) return;
@@ -627,7 +698,10 @@ setInterval(async () => {
   adopt();
   selected = LIVE ? blocks.length - 1 : 4;
   const saved = loadSaved();
-  if (saved.address && await isAddress(saved.address)) { me = saved.address; document.getElementById("my-address").value = me; }
+  if (saved.address && await isAddress(saved.address)) {
+    me = saved.address; phantomAddr = typeof saved.phantom === "string" ? saved.phantom : "";
+    document.getElementById("my-address").value = me;
+  }
   if (!LIVE && Array.isArray(saved.mined) && saved.mined.length) {
     blocks.push(...saved.mined);
     await evaluate();
