@@ -169,6 +169,7 @@ private:
   bool AddToTable(Int *pos,Int *dist,uint32_t kType);
   bool SendToServer(std::vector<ITEM> &dp,uint32_t threadId,uint32_t gpuId);
   bool CheckKey(Int d1,Int d2,uint8_t type);
+  bool ResolveHighBits(Int *pk,Point &P,Point &K);
   bool CollisionCheck(Int* d1,uint32_t type1,Int* d2,uint32_t type2);
   void ComputeExpected(double dp,double *op,double *ram,double* overHead = NULL);
   void InitRange();

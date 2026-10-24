@@ -23,6 +23,7 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <algorithm>
+#include <unordered_map>
 #ifndef WIN64
 #include <pthread.h>
 #endif
@@ -215,6 +216,68 @@ bool Kangaroo::Output(Int *pk,char sInfo,int sType) {
 
 // ----------------------------------------------------------------------------
 
+// Hash table entries keep only 126 bits of distance, so for ranges wider than
+// 125 bits a collision gives pk + M*2^126 for a small unknown M.
+// Find M with a baby-step giant-step on H = 2^126.G and fix pk.
+bool Kangaroo::ResolveHighBits(Int *pk,Point &P,Point &K) {
+
+  int bBits = rangePower - 122;          // |M| < 2^bBits (with margin)
+  int mBits = (bBits + 2) / 2;
+  uint64_t m = 1ULL << mBits;
+  uint64_t nbGiant = (1ULL << (bBits + 1 - mBits)) + 1;
+
+  Int s;
+  s.SetInt32(1);
+  s.ShiftL(126);
+  Point H = secp->ComputePublicKey(&s);
+
+  // T = P - K + 2^bBits.H = M'.H with M' = M + 2^bBits in [0,2^(bBits+1)]
+  Point nK(K);
+  nK.y.ModNeg();
+  Point T = secp->AddDirect(P,nK);
+  s.SetInt32(1);
+  s.ShiftL(126 + bBits);
+  Point BH = secp->ComputePublicKey(&s);
+  T = secp->AddDirect(T,BH);
+
+  // Baby steps: x(i.H) -> i
+  unordered_map<uint64_t,uint32_t> baby;
+  baby.reserve(m);
+  Point B(H);
+  baby[B.x.bits64[0]] = 1;
+  for(uint64_t i = 2; i <= m; i++) {
+    B = (i == 2) ? secp->DoubleDirect(H) : secp->AddDirect(B,H);
+    baby[B.x.bits64[0]] = (uint32_t)i;
+  }
+  B.y.ModNeg();
+
+  // Giant steps: T - j.m.H
+  for(uint64_t j = 0; j < nbGiant; j++) {
+    auto it = baby.find(T.x.bits64[0]);
+    if(it != baby.end()) {
+      for(int sgn = 1; sgn >= -1; sgn -= 2) {
+        int64_t M = (int64_t)(j * m) + sgn * (int64_t)it->second - (int64_t)(1ULL << bBits);
+        Int c;
+        c.SetInt32(0);
+        c.SetQWord(0,(uint64_t)(M < 0 ? -M : M));
+        c.ShiftL(126);
+        Int cand(pk);
+        if(M > 0) cand.ModSubK1order(&c);
+        else      cand.ModAddK1order(&c);
+        Point C = secp->ComputePublicKey(&cand);
+        if(C.equals(K)) {
+          pk->Set(&cand);
+          return true;
+        }
+      }
+    }
+    T = secp->AddDirect(T,B);
+  }
+
+  return false;
+
+}
+
 bool  Kangaroo::CheckKey(Int d1,Int d2,uint8_t type) {
 
   // Resolve equivalence collision
@@ -229,7 +292,7 @@ bool  Kangaroo::CheckKey(Int d1,Int d2,uint8_t type) {
 
   Point P = secp->ComputePublicKey(&pk);
 
-  if(P.equals(keyToSearch)) {
+  if(P.equals(keyToSearch) || (rangePower > 123 && ResolveHighBits(&pk,P,keyToSearch))) {
     // Key solved    
 #ifdef USE_SYMMETRY
     pk.ModAddK1order(&rangeWidthDiv2);
@@ -238,7 +301,7 @@ bool  Kangaroo::CheckKey(Int d1,Int d2,uint8_t type) {
     return Output(&pk,'N',type);
   }
 
-  if(P.equals(keyToSearchNeg)) {
+  if(P.equals(keyToSearchNeg) || (rangePower > 123 && ResolveHighBits(&pk,P,keyToSearchNeg))) {
     // Key solved
     pk.ModNegK1order();
 #ifdef USE_SYMMETRY

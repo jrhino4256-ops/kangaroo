@@ -1,7 +1,7 @@
 # Pollard's kangaroo for SECPK1
 
 A Pollard's kangaroo interval ECDLP solver for SECP256K1 (based on VanitySearch engine).\
-**This program is limited to a 125bit interval search.**
+**Distances are stored on 126 bits; for intervals wider than 125 bits the missing high bits of the key are recovered after collision with a small baby-step giant-step (up to 160 bits).**
 
 # Feature
 
@@ -424,7 +424,7 @@ Next puzzles to solve:
 
 #130, 129bits private key [2<sup>129</sup>,2<sup>130</sup>-1], [1Fo65aKq8s8iquMt6weF1rku1moWVEd5Ua](https://www.blockchain.com/explorer/addresses/btc/1Fo65aKq8s8iquMt6weF1rku1moWVEd5Ua) **13.0BTC**
 
-Expected time: several years on 256 Tesla V100 (**Not possible with this program without modification**)
+Expected time: several years on 256 Tesla V100
 
 [Up to #160](https://raw.githubusercontent.com/JeanLucPons/Kangaroo/master/puzzle32.txt)
 
