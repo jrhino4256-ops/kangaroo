@@ -40,15 +40,11 @@ signature itself, so the page does not have to trust the node.
 
 - **Your wallet:** paste your address (`python3 wallet.py address`) to see your balance and history.
   Never paste your private key or wallet file.
-- **Connect Phantom:** uses the Bitcoin key in your [Phantom](https://phantom.com) wallet as your MyChain
-  address. Both chains use secp256k1 keys, so Phantom only has to share its public key. Turn on Bitcoin
-  in Phantom's settings first. MyChain coins do not show up in the Phantom app, and Phantom cannot sign
-  MyChain payments yet.
-- **Mine from the browser:** mines the next block to your address and sends it to the node, which
-  shares it with the network. The browser is slower than `node.py --mine`, so while other miners run it
-  may lose the race a few times. When that happens it starts again on the new tip by itself.
-- **Try to cheat:** edit any amount in any block and see which rules break. Edits stay in the page
-  and are never sent to the node.
+- **Connect Phantom:** uses your [Phantom](https://phantom.com) wallet's Ethereum account as your MyChain
+  address. Ethereum and MyChain both use secp256k1 keys. Phantom signs a short "connect" message, and the
+  page recovers the public key from that signature. Nothing is sent and no fee is charged. Tested with
+  Phantom 26.34. MyChain coins do not show up in the Phantom app, and Phantom cannot sign MyChain
+  payments yet.
 
 Node HTTP API: `GET /info`, `/chain`, `/block/<hash>`, `/balance/<addr>`, `/utxos/<addr>`, `/mempool`;
 `POST /tx`, `/block`, `/peers`.

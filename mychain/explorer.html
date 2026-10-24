@@ -279,6 +279,63 @@ async function addressFromPubkey(pubHex) {  // crypto.address_from_pubkey: Base5
   return "1".repeat(zeros) + out;
 }
 
+// Keccak-256 (Ethereum's hash; SHA3-256 differs only in the padding byte)
+function keccak256(data, pad = 0x01) {
+  const RC = [0x1n, 0x8082n, 0x800000000000808an, 0x8000000080008000n, 0x808bn, 0x80000001n, 0x8000000080008081n,
+    0x8000000000008009n, 0x8an, 0x88n, 0x80008009n, 0x8000000an, 0x8000808bn, 0x800000000000008bn, 0x8000000000008089n,
+    0x8000000000008003n, 0x8000000000008002n, 0x8000000000000080n, 0x800an, 0x800000008000000an, 0x8000000080008081n,
+    0x8000000000008080n, 0x80000001n, 0x8000000080008008n];
+  const ROT = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14];
+  const M = (1n << 64n) - 1n, rotl = (x, n) => n ? ((x << BigInt(n)) | (x >> BigInt(64 - n))) & M : x;
+  const rate = 136, st = new Array(25).fill(0n);
+  const msg = new Uint8Array(Math.ceil((data.length + 1) / rate) * rate);
+  msg.set(data); msg[data.length] ^= pad; msg[msg.length - 1] ^= 0x80;
+  for (let off = 0; off < msg.length; off += rate) {
+    for (let i = 0; i < rate / 8; i++) {
+      let lane = 0n;
+      for (let b = 7; b >= 0; b--) lane = (lane << 8n) | BigInt(msg[off + 8 * i + b]);
+      st[i] ^= lane;
+    }
+    for (let round = 0; round < 24; round++) {
+      const C = [0, 1, 2, 3, 4].map(x => st[x] ^ st[x + 5] ^ st[x + 10] ^ st[x + 15] ^ st[x + 20]);
+      for (let x = 0; x < 5; x++) {
+        const D = C[(x + 4) % 5] ^ rotl(C[(x + 1) % 5], 1);
+        for (let y = 0; y < 25; y += 5) st[x + y] ^= D;
+      }
+      const B = new Array(25);
+      for (let x = 0; x < 5; x++) for (let y = 0; y < 5; y++)
+        B[y + 5 * ((2 * x + 3 * y) % 5)] = rotl(st[x + 5 * y], ROT[x + 5 * y]);
+      for (let x = 0; x < 5; x++) for (let y = 0; y < 25; y += 5)
+        st[x + y] = B[x + y] ^ (~B[(x + 1) % 5 + y] & M & B[(x + 2) % 5 + y]);
+      st[0] ^= RC[round];
+    }
+  }
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 4; i++) for (let b = 0; b < 8; b++) out[8 * i + b] = Number((st[i] >> BigInt(8 * b)) & 0xffn);
+  return out;
+}
+
+// Ethereum personal_sign: recover the signer's public key, so a Phantom Ethereum
+// account (also secp256k1) can be used as a MyChain address.
+function recoverPersonalSign(message, sigHex) {
+  const body = enc.encode(message), prefix = enc.encode(`\x19Ethereum Signed Message:\n${body.length}`);
+  const all = new Uint8Array(prefix.length + body.length); all.set(prefix); all.set(body, prefix.length);
+  const z = BigInt("0x" + hex(keccak256(all)));
+  const sig = sigHex.replace(/^0x/, "");
+  if (sig.length !== 130) throw new Error("unexpected signature length");
+  const r = BigInt("0x" + sig.slice(0, 64)), s = BigInt("0x" + sig.slice(64, 128));
+  let v = parseInt(sig.slice(128), 16); if (v >= 27) v -= 27;
+  if (!(r > 0n && r < N && s > 0n && s < N) || v > 1) throw new Error("invalid signature");
+  let y = powmod(r ** 3n + 7n, (P + 1n) / 4n, P);
+  if ((y & 1n) !== BigInt(v)) y = P - y;
+  const rinv = inv(r, N);
+  const Q = add(mul(mod(s * rinv, N), [r, y]), mul(mod(-z * rinv, N), G));
+  if (!Q) throw new Error("could not recover a key");
+  const raw = unhex(Q[0].toString(16).padStart(64, "0") + Q[1].toString(16).padStart(64, "0"));
+  return { compressed: (Q[1] & 1n ? "03" : "02") + Q[0].toString(16).padStart(64, "0"),
+           ethAddress: "0x" + hex(keccak256(raw)).slice(24) };
+}
+
 // node.py serves this page and the page reads the node's live chain. The published
 // sample copy replaces EMBEDDED with a fixed chain and works offline.
 const EMBEDDED = null;
@@ -436,7 +493,7 @@ function renderMe() {
   box.innerHTML = `<div class="me-summary">
       <div class="stat"><span class="label">Your balance on this chain</span><b class="num">${fmt(balanceOf(me))}</b></div>
       <span class="mono muted">${me}</span></div>
-    ${phantomAddr ? `<p class="foot">Connected with Phantom. This MyChain address uses the same key as your Phantom Bitcoin address <span class="mono">${esc(phantomAddr)}</span>, so only your Phantom wallet controls it. MyChain coins do not show up inside the Phantom app. Check them here.</p>` : ""}
+    ${phantomAddr ? `<p class="foot">Connected with Phantom. This MyChain address uses the same key as your Phantom ${phantomAddr.startsWith("0x") ? "Ethereum account" : "Bitcoin address"} <span class="mono">${esc(phantomAddr)}</span>, so only your Phantom wallet controls it. MyChain coins do not show up inside the Phantom app. Check them here.</p>` : ""}
     ${history.length ? `<div class="history">${history.reverse().map(h => `<div class="row"><span>${h.cb ? "Mining reward" : h.net >= 0 ? "Received" : "Sent"} · block #${h.i}</span>
       <span class="amt ${h.net >= 0 ? "plus" : "minus"}">${h.net >= 0 ? "+" : "−"}${fmt(Math.abs(h.net))}</span></div>`).join("")}</div>`
       : `<p class="muted foot">${LIVE ? "No coins yet on this node's chain. Mine a block below, or have someone send you coins with wallet.py send." : "No coins yet. This page holds a sample chain, so it cannot see blocks your own node mined. Mine the next block here and its reward goes to you."}</p>`}
@@ -533,20 +590,33 @@ async function mineToMe() {
 async function connectPhantom() {
   const msg = document.getElementById("addr-msg");
   const say = text => { msg.hidden = false; msg.className = "foot msg-bad"; msg.innerHTML = text; };
-  const provider = window.phantom?.bitcoin;
-  if (!provider?.isPhantom) {
+  const btc = window.phantom?.bitcoin, eth = window.phantom?.ethereum;
+  if (!btc?.isPhantom && !eth?.isPhantom) {
     return say(window.top !== window
       ? `Phantom cannot reach this page because it is shown inside another site. Open the explorer from your node instead: run <span class="mono">python3 node.py</span> and go to <span class="mono">http://127.0.0.1:8001/</span>.`
-      : `Phantom is not installed in this browser, or its Bitcoin network is off. Install it from <a href="https://phantom.com/download" target="_blank" rel="noopener">phantom.com</a>, turn on Bitcoin in Phantom's settings, then reload this page.`);
+      : `Phantom is not installed in this browser, or Ethereum is turned off in Phantom's Active Networks. Install it from <a href="https://phantom.com/download" target="_blank" rel="noopener">phantom.com</a>, then reload this page.`);
   }
-  let accounts;
-  try { accounts = await provider.requestAccounts(); }
-  catch { return say("Phantom did not connect. Approve the request in the Phantom window to continue."); }
-  // MyChain keys are secp256k1 like Bitcoin's, so Phantom's 33-byte SegWit public key works as-is.
-  const acct = (accounts || []).find(a => a.addressType === "p2wpkh" && /^0[23][0-9a-f]{64}$/i.test(a.publicKey || ""));
-  if (!acct) return say("Phantom did not share a Bitcoin SegWit key, which MyChain needs. Check that Bitcoin is turned on in Phantom's settings and try again.");
-  me = await addressFromPubkey(acct.publicKey);
-  phantomAddr = acct.address;
+  // MyChain keys are secp256k1, like Bitcoin's and Ethereum's, so a Phantom key can own a MyChain address.
+  try {
+    if (btc?.isPhantom) {
+      const acct = ((await btc.requestAccounts()) || []).find(a => a.addressType === "p2wpkh" && /^0[23][0-9a-f]{64}$/i.test(a.publicKey || ""));
+      if (!acct) return say("Phantom did not share a Bitcoin SegWit key, which MyChain needs. Try again.");
+      me = await addressFromPubkey(acct.publicKey);
+      phantomAddr = acct.address;
+    } else {
+      // Phantom's Ethereum account only reveals an address, so sign a message and recover the public key from it.
+      const [account] = await eth.request({ method: "eth_requestAccounts" });
+      const text = `Connect this Phantom wallet to MyChain.\n\nSigning only proves you own this account. It does not send anything or cost a fee.\n\nAccount: ${account}`;
+      const sig = await eth.request({ method: "personal_sign", params: ["0x" + hex(enc.encode(text)), account] });
+      const key = recoverPersonalSign(text, sig);
+      if (key.ethAddress !== account.toLowerCase()) return say("Phantom's signature did not match its account, so the wallet was not connected. Try again.");
+      me = await addressFromPubkey(key.compressed);
+      phantomAddr = account;
+    }
+  } catch (e) {
+    return say(e?.code === 4001 ? "You declined the request in Phantom, so nothing was connected. Click Connect Phantom to try again."
+      : `Phantom could not connect: ${esc(e?.message || e)}`);
+  }
   document.getElementById("my-address").value = me;
   msg.hidden = true;
   save(); render();
