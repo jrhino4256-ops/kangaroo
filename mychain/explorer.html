@@ -1,0 +1,640 @@
+<title>MyChain Explorer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a horizontal strip of linked blocks on top, the selected block's header and transactions below */
+:root {
+  --bg: #eef1f5; --surface: #ffffff; --ink: #15202c; --muted: #5b6876; --line: #d5dce4;
+  --accent: #2f5bd3; --accent-soft: #e3e9fb;
+  --ok: #1f7a4d; --ok-soft: #dcf1e5; --bad: #c23a2b; --bad-soft: #fbe3df;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e141b; --surface: #151e28; --ink: #dce4ec; --muted: #8d9aa8; --line: #263241;
+  --accent: #86a8ff; --accent-soft: #1b2949; --ok: #5cc98f; --ok-soft: #12321f; --bad: #ff7d6d; --bad-soft: #3b1a16;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e141b; --surface: #151e28; --ink: #dce4ec; --muted: #8d9aa8; --line: #263241;
+  --accent: #86a8ff; --accent-soft: #1b2949; --ok: #5cc98f; --ok-soft: #12321f; --bad: #ff7d6d; --bad-soft: #3b1a16;
+  color-scheme: dark }
+
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+.wrap > * { min-width: 0; }
+h1, h2, h3 { font-family: var(--display); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 800; line-height: 1.05; }
+h2 { font-size: 22px; font-weight: 600; }
+h3 { font-size: 15px; font-weight: 600; font-family: var(--body); }
+p { margin: 0; }
+.mono { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.muted { color: var(--muted); }
+.label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+
+header { display: grid; gap: 18px; }
+.intro { display: grid; gap: 8px; max-width: 68ch; }
+.stats { display: flex; flex-wrap: wrap; gap: 10px 36px; }
+.stat { display: grid; gap: 2px; }
+.stat b { font: 600 22px/1.1 var(--display); }
+.wallets { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.wallet { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 6px; min-width: 0; }
+.wallet .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.wallet .bar { height: 5px; background: var(--accent-soft); border-radius: 3px; overflow: hidden; }
+.wallet .bar i { display: block; height: 100%; background: var(--accent); }
+
+.try { background: var(--accent-soft); border-radius: 10px; padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }
+.try p { max-width: 70ch; }
+
+.strip { overflow-x: auto; padding: 4px 2px 12px; }
+.chain { display: flex; align-items: center; width: max-content; }
+.tile { all: unset; box-sizing: border-box; cursor: pointer; width: 132px; background: var(--surface); border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 3px; position: relative; }
+.tile:hover { border-color: var(--muted); }
+.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tile[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tile.bad { border-color: var(--bad); background: var(--bad-soft); }
+.tile.stale { border-style: dashed; opacity: 0.7; }
+.tile .h { font: 600 18px/1 var(--display); }
+.tile .dot { position: absolute; top: 11px; right: 11px; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.tile.bad .dot, .tile.stale .dot { background: var(--bad); }
+.link { width: 30px; height: 2px; background: var(--ok); position: relative; flex: none; }
+.link.broken { background: repeating-linear-gradient(90deg, var(--bad) 0 4px, transparent 4px 8px); }
+.link.broken::after { content: "×"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -54%); color: var(--bad); font: 700 15px var(--body); background: var(--bg); padding: 0 1px; line-height: 1; }
+
+.detail { display: grid; gap: 18px; }
+.detail-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 16px; }
+.checks { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; padding: 4px 10px; border-radius: 999px; background: var(--ok-soft); color: var(--ok); }
+.chip.bad { background: var(--bad-soft); color: var(--bad); }
+.chip::before { content: "✓"; font-weight: 700; }
+.chip.bad::before { content: "✕"; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; display: grid; gap: 12px; min-width: 0; }
+.fields { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; align-items: baseline; }
+.fields > * { min-width: 0; }
+.zeros { color: var(--accent); font-weight: 600; }
+.changed { background: var(--bad-soft); color: var(--bad); border-radius: 3px; padding: 0 2px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+button.btn { font: 500 14px var(--body); padding: 7px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--surface); cursor: pointer; }
+button.btn.ghost { background: transparent; color: var(--accent); }
+button.btn:disabled { opacity: 0.55; cursor: progress; }
+button.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.txs { display: grid; gap: 12px; }
+.tx { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px 16px; align-items: start; }
+.tx .top { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; justify-content: space-between; }
+.arrow { color: var(--muted); font-size: 20px; padding-top: 18px; }
+.side { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.coin { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 4px; min-width: 0; }
+.coin .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.coin.new { border-style: dashed; }
+.amt { font: 600 14px var(--mono); font-variant-numeric: tabular-nums; }
+.amt-input { display: inline-flex; align-items: center; gap: 4px; }
+.amt-input input { width: 9.5em; font: 600 14px var(--mono); text-align: right; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.amt-input input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.amt-input input.edited { border-color: var(--bad); color: var(--bad); }
+.sig { font-size: 12.5px; font-weight: 500; color: var(--ok); }
+.sig.bad { color: var(--bad); }
+.foot { font-size: 13.5px; }
+.me-panel { gap: 14px; }
+.addr-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.addr-row input { flex: 1 1 260px; min-width: 0; font: 13.5px var(--mono); padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.addr-row input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.msg-bad { color: var(--bad); }
+.me-summary { display: flex; flex-wrap: wrap; gap: 10px 32px; align-items: end; }
+.me-summary b { font: 600 30px/1.1 var(--display); }
+.history { display: grid; gap: 0; }
+.history .row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); }
+.plus { color: var(--ok); } .minus { color: var(--bad); }
+.wallet.you { border-color: var(--accent); }
+.problems { display: grid; gap: 4px; padding-left: 18px; margin: 0; color: var(--bad); font-size: 13.5px; }
+.who { font-weight: 600; }
+
+@media (max-width: 640px) {
+  .tx { grid-template-columns: minmax(0, 1fr); }
+  .arrow { padding: 0; transform: rotate(90deg); justify-self: center; }
+  .fields { grid-template-columns: 1fr; gap: 2px; }
+  .fields .label { margin-top: 8px; }
+}
+@media (prefers-reduced-motion: no-preference) { .tile, .chip { transition: border-color .15s, background .15s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="intro">
+      <p class="label">MyChain · a Bitcoin-style blockchain</p>
+      <h1>MyChain Explorer</h1>
+      <p class="muted" id="intro-text">Loading the chain…</p>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="wallets" id="wallets"></div>
+  </header>
+
+  <div class="try">
+    <p id="try-text"></p>
+    <button class="btn ghost" id="reset" hidden>Reset chain</button>
+  </div>
+
+  <section class="panel me-panel" id="my-wallet">
+    <div class="intro"><h2>Your wallet</h2>
+      <p class="muted foot">Paste your address from <span class="mono">python3 wallet.py address</span>. An address is safe to share. Never paste your private key or the contents of your wallet file anywhere.</p></div>
+    <form class="addr-row" id="addr-form" autocomplete="off">
+      <input id="my-address" spellcheck="false" placeholder="1…" aria-label="Your wallet address">
+      <button class="btn" type="submit">Show my wallet</button>
+    </form>
+    <p class="foot" id="addr-msg" hidden></p>
+    <div id="my-info" hidden></div>
+  </section>
+
+  <section>
+    <div class="strip"><div class="chain" id="chain"></div></div>
+  </section>
+
+  <section class="detail" id="detail"></section>
+</div>
+
+<script>
+// Mirrors mychain/crypto.py and chain.py byte for byte.
+const enc = new TextEncoder();
+const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
+const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
+const rev = h => h.match(/../g).reverse().join("");
+async function sha256d(bytes) {
+  const once = await crypto.subtle.digest("SHA-256", bytes);
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", once));
+}
+// json.dumps(..., sort_keys=True, separators=(",", ":"))
+function canon(v) {
+  if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+  if (v && typeof v === "object")
+    return "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}";
+  return JSON.stringify(v);
+}
+async function txid(tx) { return rev(hex(await sha256d(enc.encode(canon(tx))))); }
+async function sighash(tx) {
+  const blank = { inputs: tx.inputs.map(i => ({ txid: i.txid, index: i.index, pubkey: "", sig: "" })),
+                  outputs: tx.outputs, coinbase: tx.coinbase };
+  return hex(await sha256d(enc.encode(canon(blank))));
+}
+async function merkleRoot(ids) {
+  let level = ids.map(unhex);
+  if (!level.length) return "00".repeat(32);
+  while (level.length > 1) {
+    if (level.length % 2) level.push(level[level.length - 1]);
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const pair = new Uint8Array(64); pair.set(level[i]); pair.set(level[i + 1], 32);
+      next.push(await sha256d(pair));
+    }
+    level = next;
+  }
+  return hex(level[0]);
+}
+const headerPrefix = b => b.prev_hash + b.merkle_root + b.timestamp.toString(16).padStart(16, "0") +
+  BigInt(b.target).toString(16).padStart(64, "0");
+async function blockHash(b, nonce = b.nonce) {
+  return rev(hex(await sha256d(enc.encode(headerPrefix(b) + nonce.toString(16).padStart(16, "0")))));
+}
+
+// secp256k1 ECDSA verification
+const P = 2n ** 256n - 2n ** 32n - 977n;
+const N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
+const G = [0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798n,
+           0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8n];
+const mod = (a, m) => ((a % m) + m) % m;
+function inv(a, m) {
+  let [r0, r1, s0, s1] = [mod(a, m), m, 1n, 0n];
+  while (r1) { const q = r0 / r1; [r0, r1] = [r1, r0 - q * r1]; [s0, s1] = [s1, s0 - q * s1]; }
+  return mod(s0, m);
+}
+function add(a, b) {
+  if (!a) return b; if (!b) return a;
+  if (a[0] === b[0] && mod(a[1] + b[1], P) === 0n) return null;
+  const l = a[0] === b[0] && a[1] === b[1]
+    ? mod(3n * a[0] * a[0] * inv(2n * a[1], P), P)
+    : mod((b[1] - a[1]) * inv(b[0] - a[0], P), P);
+  const x = mod(l * l - a[0] - b[0], P);
+  return [x, mod(l * (a[0] - x) - a[1], P)];
+}
+function mul(k, p) { let r = null; while (k) { if (k & 1n) r = add(r, p); p = add(p, p); k >>= 1n; } return r; }
+function powmod(b, e, m) { let r = 1n; b = mod(b, m); while (e) { if (e & 1n) r = r * b % m; b = b * b % m; e >>= 1n; } return r; }
+function verifySig(pubHex, hashHex, sigHex) {
+  const x = BigInt("0x" + pubHex.slice(2));
+  let y = powmod(x ** 3n + 7n, (P + 1n) / 4n, P);
+  if ((y & 1n) !== BigInt(parseInt(pubHex.slice(0, 2), 16) & 1)) y = P - y;
+  const r = BigInt("0x" + sigHex.slice(0, 64)), s = BigInt("0x" + sigHex.slice(64));
+  if (!(r > 0n && r < N && s > 0n && s <= N / 2n)) return false;
+  const w = inv(s, N), z = BigInt("0x" + hashHex);
+  const pt = add(mul(mod(z * w, N), G), mul(mod(r * w, N), [x, y]));
+  return !!pt && mod(pt[0], N) === r;
+}
+
+// node.py serves this page and the page reads the node's live chain. The published
+// sample copy replaces EMBEDDED with a fixed chain and works offline.
+const EMBEDDED = null;
+const LIVE = !EMBEDDED;
+let DATA = EMBEDDED, COIN = 1e8, ORIGINAL = "[]", blocks = [];
+let selected = 0, results = [], mining = false, utxo = new Map(), me = "";
+async function loadLive() {
+  const d = await (await fetch("chain", { cache: "no-store" })).json();
+  DATA = { blocks: d.blocks.map((b, i) => ({ ...b, height: i })), names: {}, params: d.params };
+}
+function adopt() { COIN = DATA.params.coin; ORIGINAL = JSON.stringify(DATA.blocks); blocks = JSON.parse(ORIGINAL); }
+const STORE = "mychain-explorer";
+function loadSaved() { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; } }
+function save() {
+  try { localStorage.setItem(STORE, JSON.stringify({ address: me, mined: LIVE ? [] : JSON.parse(ORIGINAL).slice(DATA.blocks.length) })); } catch {}
+}
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+async function isAddress(s) {  // Base58Check, version 0, like crypto.is_valid_address
+  if (!/^[1-9A-HJ-NP-Za-km-z]{25,35}$/.test(s)) return false;
+  let n = 0n; for (const c of s) n = n * 58n + BigInt(B58.indexOf(c));
+  let h = n.toString(16); if (h.length % 2) h = "0" + h;
+  const bytes = unhex("00".repeat(s.match(/^1*/)[0].length) + h);
+  if (bytes.length !== 25 || bytes[0] !== 0) return false;
+  const sum = await sha256d(bytes.slice(0, 21));
+  return [0, 1, 2, 3].every(k => sum[k] === bytes[21 + k]);
+}
+const looksSecret = s => /^(0x)?[0-9a-f]{64}$/i.test(s) || /private/i.test(s) || /^[5KL][1-9A-HJ-NP-Za-km-z]{50,51}$/.test(s);
+const balanceOf = a => [...utxo.values()].reduce((s, o) => s + (o.address === a ? o.amount : 0), 0);
+const sigCache = new Map();
+
+const name = a => a === me ? "You" : DATA.names[a] || (a ? a.slice(0, 8) + "…" : "nobody");
+const fmt = n => (n / COIN).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 });
+const short = h => h.slice(0, 10) + "…" + h.slice(-6);
+const subsidy = h => Math.floor(DATA.params.reward / 2 ** Math.floor(h / DATA.params.halving));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+function hashHTML(h) {
+  const z = h.match(/^0*/)[0];
+  return `<span class="zeros">${z}</span>${h.slice(z.length)}`;
+}
+
+async function evaluate() {
+  const out = [], coins = new Map();
+  utxo = new Map();  // "txid:index" -> output, built along the chain like a UTXO set
+  let broken = false;
+  for (const [i, b] of blocks.entries()) {
+    const r = { problems: [], txids: [], fees: 0, sigs: [] };
+    for (const tx of b.txs) r.txids.push(await txid(tx));
+    r.merkle = await merkleRoot(r.txids);
+    r.merkleOk = r.merkle === b.merkle_root;
+    r.hash = await blockHash(b);
+    r.powOk = BigInt("0x" + r.hash) <= BigInt(b.target);
+    r.linkOk = i === 0 || b.prev_hash === out[i - 1].hash;
+    if (!r.merkleOk) r.problems.push("The transactions no longer match the merkle root in the header.");
+    if (!r.powOk) r.problems.push("The header hash is above the target, so there is no valid proof of work.");
+    if (!r.linkOk) r.problems.push("The previous block changed, so this block's prev_hash points at a block that no longer exists.");
+    for (const [t, tx] of b.txs.entries()) {
+      const sigs = [];
+      if (tx.inputs.length) {
+        const sh = await sighash(tx);
+        let inSum = 0;
+        for (const inp of tx.inputs) {
+          const key = sh + inp.sig;
+          if (!sigCache.has(key)) sigCache.set(key, verifySig(inp.pubkey, sh, inp.sig));
+          const prev = coins.get(inp.txid + ":" + inp.index);
+          if (!prev) r.problems.push(`Transaction ${t} spends a coin that no longer exists, because the transaction that created it was changed.`);
+          else { inSum += prev.amount; coins.delete(inp.txid + ":" + inp.index); }
+          sigs.push({ ok: sigCache.get(key), prev });
+          if (!sigCache.get(key)) r.problems.push(`Transaction ${t}: the signature does not match. The owner signed different amounts, and only their private key can sign new ones.`);
+        }
+        const outSum = tx.outputs.reduce((s, o) => s + o.amount, 0);
+        if (outSum > inSum) r.problems.push(`Transaction ${t} pays out ${fmt(outSum)} but only spends ${fmt(inSum)}.`);
+        r.fees += inSum - outSum;
+      }
+      r.sigs.push(sigs);
+      tx.outputs.forEach((o, n) => coins.set(r.txids[t] + ":" + n, o));
+    }
+    const cbOut = b.txs[0].outputs.reduce((s, o) => s + o.amount, 0);
+    r.reward = subsidy(i) + Math.max(r.fees, 0);
+    if (i > 0 && r.fees >= 0 && cbOut > r.reward) r.problems.push(`The miner pays themselves ${fmt(cbOut)}, but the reward plus fees is only ${fmt(r.reward)}.`);
+    r.valid = !r.problems.length;
+    r.stale = broken;
+    if (!r.valid) broken = true;
+    if (!broken) utxo = new Map(coins);
+    out.push(r);
+  }
+  results = out;
+}
+
+function render() {
+  const valid = results.filter(r => r.valid && !r.stale).length;
+  const tampered = JSON.stringify(blocks) !== ORIGINAL;
+  document.getElementById("reset").hidden = !tampered;
+  const pay = blocks.findIndex(b => b.txs.length > 1);
+  document.getElementById("intro-text").innerHTML = LIVE
+    ? `A live view of the node at <span class="mono">${esc(location.host)}</span>, refreshed every few seconds. Your browser recomputes every hash and checks every signature itself, so nothing here is taken on trust.`
+    : `This is a real chain mined by <span class="mono">mychain/chain.py</span>. Alice, Bob and Carol are example wallets. Your browser recomputes every hash and checks every signature itself, so nothing on this page is taken on trust.`;
+  document.getElementById("try-text").innerHTML = tampered && LIVE
+    ? `<b>Live updates are paused</b> while you edit. Your changes stay in this page and never reach the node. Reset the chain to resume.`
+    : LIVE
+    ? `<b>Try to cheat.</b> ${pay > 0 ? `Open block #${pay} and change` : "Once a payment is mined, open its block and change"} the amount someone was paid. Then fix whatever breaks and see how far you get. Edits stay in this page.`
+    : `<b>Try to cheat.</b> Open block #4 and change Alice's 12.5-coin payment to Bob into 125. Then fix whatever breaks and see how far you get.`;
+  const zeroBits = 256 - BigInt(blocks[blocks.length - 1].target).toString(2).length + 1;
+  const payments = blocks.reduce((s, b) => s + b.txs.length - 1, 0);
+  document.getElementById("stats").innerHTML = [
+    ["Height", blocks.length - 1],
+    ["Valid blocks", `${valid} of ${blocks.length}`],
+    ["Payments", payments],
+    ["Coins mined", fmt(blocks.slice(1).reduce((s, _, k) => s + subsidy(k + 1), 0)).split(".")[0]],
+    ["Difficulty", `${zeroBits} zero bits`],
+  ].map(([k, v]) => `<div class="stat"><span class="label">${k}</span><b class="num">${v}</b></div>`).join("");
+
+  let people = Object.entries(DATA.names).map(([a, n]) => [n, a]);
+  if (!people.length) {
+    const held = new Map();
+    for (const o of utxo.values()) held.set(o.address, (held.get(o.address) || 0) + o.amount);
+    people = [...held].filter(([a]) => a !== me).sort((x, y) => y[1] - x[1]).slice(0, me ? 3 : 4).map(([a]) => [name(a), a]);
+  }
+  if (me && !DATA.names[me]) people.push(["You", me]);
+  const total = [...utxo.values()].reduce((s, o) => s + o.amount, 0) || 1;
+  document.getElementById("wallets").innerHTML = people.map(([n, addr]) => {
+    const v = balanceOf(addr);
+    return `<div class="wallet ${addr === me ? "you" : ""}"><div class="row"><span class="who">${esc(n)}</span><span class="amt">${fmt(v)}</span></div>
+      <div class="bar"><i style="width:${(v / total * 100).toFixed(1)}%"></i></div>
+      <span class="mono muted">${esc(addr)}</span></div>`;
+  }).join("");
+
+  document.getElementById("chain").innerHTML = blocks.map((b, i) => {
+    const r = results[i];
+    const cls = !r.valid ? "bad" : r.stale ? "stale" : "";
+    const miner = i === 0 ? "genesis" : `mined by ${esc(name(b.txs[0].outputs[0]?.address))}`;
+    const link = i ? `<span class="link ${r.linkOk ? "" : "broken"}" aria-hidden="true"></span>` : "";
+    return `${link}<button class="tile ${cls}" data-i="${i}" aria-current="${i === selected}" aria-label="Block ${i}">
+      <span class="dot"></span><span class="h">#${i}</span>
+      <span class="mono muted">${r.hash.slice(0, 10)}…</span>
+      <span class="muted" style="font-size:12.5px">${b.txs.length} tx · ${miner}</span></button>`;
+  }).join("");
+  renderDetail();
+  renderMe();
+}
+
+function renderMe() {
+  const box = document.getElementById("my-info");
+  box.hidden = !me;
+  if (!me) return;
+  const history = [];
+  results.forEach((r, i) => {
+    if (!r.valid || r.stale) return;
+    blocks[i].txs.forEach((tx, t) => {
+      const got = tx.outputs.reduce((s, o) => s + (o.address === me ? o.amount : 0), 0);
+      const spent = r.sigs[t].reduce((s, x) => s + (x.prev && x.prev.address === me ? x.prev.amount : 0), 0);
+      if (got || spent) history.push({ i, net: got - spent, cb: !tx.inputs.length });
+    });
+  });
+  const valid = results.every(r => r.valid && !r.stale);
+  const next = blocks.length;
+  box.innerHTML = `<div class="me-summary">
+      <div class="stat"><span class="label">Your balance on this chain</span><b class="num">${fmt(balanceOf(me))}</b></div>
+      <span class="mono muted">${me}</span></div>
+    ${history.length ? `<div class="history">${history.reverse().map(h => `<div class="row"><span>${h.cb ? "Mining reward" : h.net >= 0 ? "Received" : "Sent"} · block #${h.i}</span>
+      <span class="amt ${h.net >= 0 ? "plus" : "minus"}">${h.net >= 0 ? "+" : "−"}${fmt(Math.abs(h.net))}</span></div>`).join("")}</div>`
+      : `<p class="muted foot">${LIVE ? "No coins yet on this node's chain. Mine a block below, or have someone send you coins with wallet.py send." : "No coins yet. This page holds a sample chain, so it cannot see blocks your own node mined. Mine the next block here and its reward goes to you."}</p>`}
+    <div class="actions">
+      <button class="btn" id="mine-me" ${valid ? "" : "disabled"}>Mine block #${next} to my address</button>
+      <button class="btn ghost" id="forget">Forget my address</button>
+    </div>
+    <p class="muted foot" id="mine-me-status">${!valid ? "Reset the chain first. New blocks have to build on a valid chain."
+      : `Your browser does the proof-of-work itself, about ${expectedHashes().toLocaleString("en-US")} hashes on average. ` +
+        (LIVE ? "The block goes to this node, which shares it with the network." : "Blocks you mine are kept in this browser only.")}</p>`;
+  document.getElementById("mine-me").addEventListener("click", mineToMe);
+  document.getElementById("forget").addEventListener("click", forget);
+}
+
+function nextTarget(height) {
+  const parent = blocks[height - 1], t = BigInt(parent.target);
+  const every = DATA.params.adjustInterval;
+  if (height % every) return t;
+  const expected = BigInt(every * DATA.params.targetBlockTime), first = blocks[height - every];
+  let actual = BigInt(parent.timestamp - first.timestamp);
+  actual = actual < expected / 4n ? expected / 4n : actual > expected * 4n ? expected * 4n : actual;
+  const t2 = t * actual / expected, max = BigInt(DATA.params.maxTarget);
+  return t2 < max ? t2 : max;
+}
+
+const expectedHashes = () => Number(2n ** 256n / (nextTarget(blocks.length) + 1n));
+
+async function findNonce(b, status, shouldStop) {
+  const target = BigInt(b.target);
+  let checked = performance.now();
+  for (let nonce = 0; ; nonce += 512) {
+    if (shouldStop && performance.now() - checked > 1000) {
+      checked = performance.now();
+      if (await shouldStop()) return null;
+    }
+    const batch = await Promise.all(Array.from({ length: 512 }, (_, k) => blockHash(b, nonce + k)));
+    const hit = batch.findIndex(h => BigInt("0x" + h) <= target);
+    if (hit >= 0) return nonce + hit;
+    if (status) status.textContent = `Mining… ${(nonce + 512).toLocaleString("en-US")} hashes tried`;
+  }
+}
+
+async function mineToMe() {
+  if (mining) return;
+  mining = true;
+  document.getElementById("mine-me").disabled = true;
+  const start = performance.now();
+  const status = () => document.getElementById("mine-me-status");
+  const tipMoved = async prev => {
+    try { return (await (await fetch("info", { cache: "no-store" })).json()).tip !== prev; } catch { return false; }
+  };
+  let b, height, note = "", lost = 0;
+  try {
+    while (true) {
+      height = blocks.length;
+      const cb = { inputs: [], outputs: [{ amount: subsidy(height), address: me }], coinbase: `height:${height}` };
+      const times = blocks.slice(-11).map(x => x.timestamp).sort((x, y) => x - y);
+      b = { prev_hash: results[height - 1].hash, merkle_root: await merkleRoot([await txid(cb)]),
+            timestamp: Math.max(Math.floor(Date.now() / 1000), times[times.length >> 1] + 1),
+            target: "0x" + nextTarget(height).toString(16), nonce: 0, txs: [cb] };
+      b.nonce = await findNonce(b, status(), LIVE ? () => tipMoved(b.prev_hash) : null);
+      if (b.nonce !== null && !LIVE) break;
+      if (b.nonce !== null) {
+        const res = await (await fetch("block", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ block: b }) })).json();
+        if (res.error) throw new Error(res.error);
+        if (res.accepted) { await loadLive(); adopt(); break; }
+      }
+      // Another miner found a block first, so start again on top of theirs.
+      lost++;
+      note = ` Other miners found ${lost} block${lost > 1 ? "s" : ""} first, so the page restarted on top of theirs.`;
+      await loadLive(); adopt(); await evaluate();
+    }
+    if (!LIVE) {
+      b.hash = await blockHash(b); b.height = height;
+      blocks.push(b);
+      const base = JSON.parse(ORIGINAL); base.push(JSON.parse(JSON.stringify(b))); ORIGINAL = JSON.stringify(base);
+      save();
+    }
+  } catch (e) {
+    mining = false;
+    await refresh();
+    status().textContent = `The node did not accept the block: ${e.message}`;
+    return;
+  }
+  mining = false;
+  selected = height;
+  await refresh();
+  status().textContent =
+    `You mined block #${height} in ${((performance.now() - start) / 1000).toFixed(1)}s and earned ${fmt(subsidy(height))} coins.` + note;
+  document.querySelector(`.tile[data-i="${height}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function forget() {
+  me = ""; document.getElementById("my-address").value = "";
+  save(); render();
+}
+
+function renderDetail() {
+  const i = selected, b = blocks[i], r = results[i], orig = JSON.parse(ORIGINAL)[i];
+  const when = new Date(b.timestamp * 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  const chip = (ok, good, bad) => `<span class="chip ${ok ? "" : "bad"}">${ok ? good : bad}</span>`;
+  const sigsOk = r.sigs.flat().every(s => s.ok);
+  let html = `<div class="detail-head"><h2>Block #${i}${i === 0 ? " · genesis" : ""}</h2><span class="muted">${when}</span></div>
+    <div class="checks">
+      ${chip(r.powOk, "Proof of work", "Proof of work fails")}
+      ${chip(r.merkleOk, "Merkle root matches", "Merkle root mismatch")}
+      ${chip(r.linkOk, i ? "Links to block #" + (i - 1) : "Start of chain", "Link to block #" + (i - 1) + " broken")}
+      ${chip(sigsOk, "Signatures valid", "Bad signature")}
+      ${r.stale && r.valid ? `<span class="chip bad">Builds on an invalid block</span>` : ""}
+    </div>`;
+
+  if (r.problems.length || (r.stale && r.valid)) {
+    const fixMerkle = !r.merkleOk ? `<button class="btn" id="fix-merkle">Update merkle root in header</button>` : "";
+    const fixPow = r.merkleOk && !r.powOk ? `<button class="btn" id="remine">Re-mine block #${i}</button>` : "";
+    html += `<div class="panel" style="border-color:var(--bad)"><h3>Why the network rejects this block</h3>
+      <ul class="problems">${r.problems.map(p => `<li>${p}</li>`).join("")}${r.stale && r.valid ? "<li>An earlier block is invalid, so every block after it is rejected too. Fixing this block alone does not help.</li>" : ""}</ul>
+      ${fixMerkle || fixPow ? `<div class="actions">${fixMerkle}${fixPow}</div>` : ""}
+      <p class="muted foot" id="mine-status"></p></div>`;
+  }
+
+  const field = (k, v, changed) => `<span class="label">${k}</span><span class="mono ${changed ? "changed" : ""}">${v}</span>`;
+  html += `<div class="panel"><h3>Block header</h3><p class="muted foot">Miners hash these six fields twice with SHA-256. The block counts only if the result is at or below the target, which is why valid hashes start with zeros.</p>
+    <div class="fields">
+      ${field("Block hash", hashHTML(r.hash), r.hash !== orig.hash)}
+      ${field("Previous hash", b.prev_hash)}
+      ${field("Merkle root", b.merkle_root, b.merkle_root !== orig.merkle_root)}
+      ${field("Timestamp", b.timestamp + " · " + when)}
+      ${field("Target", "0x" + BigInt(b.target).toString(16).padStart(64, "0"))}
+      ${field("Nonce", b.nonce.toLocaleString("en-US"), b.nonce !== orig.nonce)}
+    </div></div>`;
+
+  html += `<div class="txs">` + b.txs.map((tx, t) => {
+    const cb = !tx.inputs.length;
+    const ins = cb
+      ? `<div class="coin new"><span class="who">New coins</span><span class="muted foot">${i === 0 ? esc(tx.coinbase.replace(/^height:\d+ /, "")) : `${fmt(subsidy(i))} block reward + ${fmt(Math.max(r.fees, 0))} fees`}</span></div>`
+      : tx.inputs.map((inp, n) => {
+          const s = r.sigs[t][n];
+          return `<div class="coin"><div class="row"><span class="who">${s.prev ? esc(name(s.prev.address)) : "missing coin"}</span>
+            <span class="amt">${s.prev ? fmt(s.prev.amount) : "?"}</span></div>
+            <span class="mono muted">spends ${short(inp.txid)}:${inp.index}</span>
+            <span class="sig ${s.ok ? "" : "bad"}">${s.ok ? "✓ signed by owner" : "✕ signature does not match"}</span></div>`;
+        }).join("");
+    const outs = tx.outputs.length ? tx.outputs.map((o, n) => {
+      const was = orig.txs[t].outputs[n].amount;
+      return `<div class="coin"><div class="row"><span class="who">${esc(name(o.address))}${!cb && n === tx.outputs.length - 1 && tx.outputs.length > 1 ? ' <span class="muted" style="font-weight:400">(change)</span>' : ""}</span>
+        <label class="amt-input"><input type="number" inputmode="decimal" step="any" min="0" id="amt-${i}-${t}-${n}" data-t="${t}" data-n="${n}" value="${o.amount / COIN}" class="${o.amount !== was ? "edited" : ""}" aria-label="Amount paid to ${esc(name(o.address))}"></label></div>
+        <span class="mono muted">${esc(o.address)}</span></div>`;
+    }).join("") : `<div class="coin"><span class="muted foot">No outputs. The genesis coins can never be spent.</span></div>`;
+    const fee = cb ? "" : (() => {
+      const inSum = r.sigs[t].reduce((s, x) => s + (x.prev ? x.prev.amount : 0), 0);
+      return ` · fee ${fmt(inSum - tx.outputs.reduce((s, o) => s + o.amount, 0))}`;
+    })();
+    return `<div class="panel tx"><div class="top"><h3>${cb ? "Coinbase" : "Payment"}${fee}</h3><span class="mono muted">tx ${short(r.txids[t])}</span></div>
+      <div class="side"><span class="label">${cb ? "Source" : "Spends"}</span>${ins}</div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="side"><span class="label">Pays</span>${outs}</div></div>`;
+  }).join("") + `</div>`;
+
+  document.getElementById("detail").innerHTML = html;
+  document.getElementById("fix-merkle")?.addEventListener("click", async () => {
+    b.merkle_root = r.merkle; await refresh();
+  });
+  document.getElementById("remine")?.addEventListener("click", remine);
+}
+
+async function remine() {
+  if (mining) return;
+  mining = true;
+  const b = blocks[selected];
+  document.getElementById("remine").disabled = true;
+  const start = performance.now();
+  const found = b.nonce = await findNonce(b, document.getElementById("mine-status"));
+  mining = false;
+  await refresh();
+  const secs = ((performance.now() - start) / 1000).toFixed(1);
+  const st = document.getElementById("mine-status");
+  const msg = `Found nonce ${found.toLocaleString("en-US")} after ${secs}s. The real network keeps adding blocks to the honest chain while you re-mine, and you would also have to re-mine every block after this one.`;
+  if (st) st.textContent = msg;
+  else document.querySelector(".checks").insertAdjacentHTML("afterend", `<p class="muted foot">${msg}</p>`);
+}
+
+async function refresh() { await evaluate(); render(); }
+
+document.getElementById("chain").addEventListener("click", e => {
+  const t = e.target.closest(".tile"); if (!t || mining) return;
+  selected = +t.dataset.i; render();
+});
+document.getElementById("detail").addEventListener("change", async e => {
+  const inp = e.target.closest("input[data-t]"); if (!inp || mining) return;
+  const v = Math.round(parseFloat(inp.value) * COIN);
+  if (!Number.isFinite(v) || v <= 0) { inp.value = blocks[selected].txs[+inp.dataset.t].outputs[+inp.dataset.n].amount / COIN; return; }
+  blocks[selected].txs[+inp.dataset.t].outputs[+inp.dataset.n].amount = v;
+  const id = inp.id; await refresh(); document.getElementById(id)?.focus();
+});
+document.getElementById("reset").addEventListener("click", async () => {
+  if (mining) return;
+  blocks = JSON.parse(ORIGINAL); await refresh();
+});
+document.getElementById("addr-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const input = document.getElementById("my-address"), msg = document.getElementById("addr-msg");
+  const v = input.value.trim();
+  msg.hidden = false; msg.className = "foot msg-bad";
+  if (looksSecret(v)) {
+    input.value = "";
+    msg.textContent = "That looks like a private key, so it was cleared and not saved. Paste your address instead: it starts with 1 and comes from python3 wallet.py address. If you shared that key anywhere, move your coins to a new wallet.";
+    return;
+  }
+  if (!(await isAddress(v))) {
+    msg.textContent = "That is not a valid MyChain address. Addresses start with 1, are 26 to 35 characters long, and include a checksum, so a single wrong character fails. Copy it again from python3 wallet.py address.";
+    return;
+  }
+  msg.hidden = true;
+  me = v; save(); render();
+});
+
+setInterval(async () => {
+  if (!LIVE || mining || document.hidden || JSON.stringify(blocks) !== ORIGINAL) return;
+  try {
+    const info = await (await fetch("info", { cache: "no-store" })).json();
+    if (info.tip === results[results.length - 1]?.hash) return;
+    const follow = selected === blocks.length - 1;
+    await loadLive(); adopt();
+    if (follow) selected = blocks.length - 1;
+    await refresh();
+    if (follow) document.querySelector(".strip").scrollLeft = 1e9;
+  } catch {}
+}, 4000);
+
+(async () => {
+  try { if (LIVE) await loadLive(); }
+  catch { document.getElementById("intro-text").textContent = "Could not load the chain. Open this page from a running node, for example http://127.0.0.1:8001/."; return; }
+  adopt();
+  selected = LIVE ? blocks.length - 1 : 4;
+  const saved = loadSaved();
+  if (saved.address && await isAddress(saved.address)) { me = saved.address; document.getElementById("my-address").value = me; }
+  if (!LIVE && Array.isArray(saved.mined) && saved.mined.length) {
+    blocks.push(...saved.mined);
+    await evaluate();
+    if (results.every(r => r.valid && !r.stale)) ORIGINAL = JSON.stringify(blocks);
+    else blocks = JSON.parse(ORIGINAL);
+  }
+  await refresh();
+  if (LIVE) document.querySelector(".strip").scrollLeft = 1e9;
+})();
+</script>

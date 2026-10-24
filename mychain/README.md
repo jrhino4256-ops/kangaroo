@@ -10,6 +10,7 @@ and read every line.
 | `chain.py` | Transactions, UTXO set, merkle trees, blocks, proof-of-work, difficulty retargeting, halving, most-work chain selection and reorgs, mempool |
 | `node.py` | Full node over HTTP: validates, mines, stores blocks, gossips blocks/transactions to peers, syncs |
 | `wallet.py` | CLI wallet: create keys, check balance, sign and send payments |
+| `explorer.html` | Block explorer web page that every node serves at `/` |
 | `test_chain.py` | Tests for the consensus rules (double spends, forged signatures, greedy miners, reorgs…) |
 
 ## Try it
@@ -30,6 +31,20 @@ python3 wallet.py new --wallet bob.json            # prints bob's address
 python3 wallet.py send <BOB_ADDRESS> 12.5 --wallet alice.json
 python3 wallet.py balance --wallet bob.json --node http://127.0.0.1:8002
 ```
+
+## Block explorer
+
+Open any running node in a browser, for example http://127.0.0.1:8001/. The page shows the node's
+chain live and refreshes every few seconds. Your browser re-checks every hash, merkle root and
+signature itself, so the page does not have to trust the node.
+
+- **Your wallet:** paste your address (`python3 wallet.py address`) to see your balance and history.
+  Never paste your private key or wallet file.
+- **Mine from the browser:** mines the next block to your address and sends it to the node, which
+  shares it with the network. The browser is slower than `node.py --mine`, so while other miners run it
+  may lose the race a few times. When that happens it starts again on the new tip by itself.
+- **Try to cheat:** edit any amount in any block and see which rules break. Edits stay in the page
+  and are never sent to the node.
 
 Node HTTP API: `GET /info`, `/chain`, `/block/<hash>`, `/balance/<addr>`, `/utxos/<addr>`, `/mempool`;
 `POST /tx`, `/block`, `/peers`.
@@ -64,4 +79,4 @@ To change the economics, edit the constants at the top of `chain.py`. A differen
 ## Ideas for next steps
 
 Merkle proofs for light clients · headers-first sync · a small script language (multisig, timelocks) ·
-a block explorer web page · replacing the crypto with `coincurve` for 100× faster verification.
+replacing the crypto with `coincurve` for 100× faster verification.

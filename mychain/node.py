@@ -10,8 +10,16 @@ import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import chain as C
 from chain import Block, Blockchain, OrphanBlock, Transaction, ValidationError, mine, COIN
 from wallet import load_or_create_wallet
+
+EXPLORER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "explorer.html")
+PAGE_HEAD = (b'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+             b'<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body>')
+CHAIN_PARAMS = {"coin": COIN, "maxTarget": hex(C.MAX_TARGET), "reward": C.INITIAL_REWARD,
+                "halving": C.HALVING_INTERVAL, "adjustInterval": C.ADJUST_INTERVAL,
+                "targetBlockTime": C.TARGET_BLOCK_TIME}
 
 # Talk to peers directly, never through an HTTP proxy from the environment.
 _http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -149,6 +157,14 @@ def make_handler(node: Node):
             self.wfile.write(body)
 
         def do_GET(self):
+            if self.path in ("/", "/explorer"):  # the block explorer web page
+                with open(EXPLORER, "rb") as f:
+                    body = PAGE_HEAD + f.read() + b"</body></html>"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                return self.wfile.write(body)
             c = node.chain
             parts = self.path.strip("/").split("/")
             with node.lock:
@@ -158,7 +174,8 @@ def make_handler(node: Node):
                                        "difficulty": (2 ** 240) / tip.target,
                                        "mempool": len(c.mempool), "peers": sorted(node.peers)})
                 if parts == ["chain"]:
-                    return self.reply({"blocks": [b.to_dict() for b in c.best_chain()]})
+                    return self.reply({"blocks": [{**b.to_dict(), "hash": b.hash} for b in c.best_chain()],
+                                       "params": CHAIN_PARAMS})
                 if parts[0] == "block" and len(parts) == 2 and parts[1] in c.blocks:
                     return self.reply(c.blocks[parts[1]].to_dict())
                 if parts[0] == "balance" and len(parts) == 2:
@@ -211,6 +228,7 @@ def main():
     server = ThreadingHTTPServer((args.host, args.port), make_handler(node))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     node.log(f"listening, genesis {node.chain.genesis_hash[:16]}…")
+    node.log(f"block explorer: http://{args.host}:{args.port}/")
     def keep_connected():  # retry seed peers that were down when we started
         while True:
             for p in args.peer:
